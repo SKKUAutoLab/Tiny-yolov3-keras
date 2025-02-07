@@ -1,4 +1,5 @@
-# SKKU-Tiny-yolov3-keras Tutorial
+# 2025 동계 비교과 프로그램 - 자율주행 SoC 설계
+# 자동화 연구실
 
 > **YOLOv3-tiny Tutorial**  
 > - 커스텀 이미지 감지 데이터 학습을 위한 사전 학습된 모델 가중치와 함께  
