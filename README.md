@@ -1,42 +1,42 @@
-# 2025 동계 비교과 프로그램 - 자율주행 SoC 설계
+# 2025 Winter Extracurricular Program - Autonomous Driving SoC Design
 
 > **YOLOv3-tiny Tutorial**  
-> - 커스텀 이미지 감지 데이터 학습을 위한 사전 학습된 모델 가중치와 함께  
->   Keras와 TensorFlow 백엔드를 활용한 YOLOv3-tiny 모델 구현체
+> - Implementation of the YOLOv3-tiny model using Keras and TensorFlow backends,  
+>   along with pre-trained model weights for training custom image detection data
 
 ---
 
-## 학습 목표
+## Learning Objectives
 
-- **Roboflow**를 활용해 커스텀 이미지 감지 데이터 불러오기
-- **Keras**에서 YOLOv3-tiny 모델 설정하기
-- YOLOv3-tiny 모델 학습 진행하기
-- 학습된 모델을 이용한 추론(Inference) 수행하기
-- 향후 양자화 및 FPGA 컴파일을 위한 Keras 모델 가중치 저장하기
-
----
-
-## 모델 가중치 다운로드
-
-사전 학습된 모델 가중치를 아래 링크에서 다운로드 받을 수 있습니다:
-
-[**YOLOv3 모델 가중치 다운로드**](https://drive.google.com/uc?id=1Ybgwyc57cBnq9Byo41zuzOmBdFcRWNRL)
+- Import custom image detection data using **Roboflow**
+- Set up the YOLOv3-tiny model in **Keras**
+- Train the YOLOv3-tiny model
+- Perform inference using the trained model
+- Save Keras model weights for future quantization and FPGA compilation
 
 ---
 
-## Roboflow를 이용한 데이터 관리
+## Downloading Model Weights
 
-[Roboflow](https://roboflow.ai)는 컴퓨터 비전 데이터셋을 관리, 전처리, 증강, 버전 관리하는 데 최적화된 도구입니다.
+You can download the pre-trained model weights from the link below:
 
-**주요 이점:**
-- 코드 작성량 50% 감소
-- 어노테이션 품질 자동 확인
-- 학습 시간 단축
-- 모델 재현성 향상
+[**Download YOLOv3 Model Weights**](https://drive.google.com/uc?id=1Ybgwyc57cBnq9Byo41zuzOmBdFcRWNRL)
 
-> **예시 이미지:**
+---
+
+## Data Management with Roboflow
+
+[Roboflow](https://roboflow.ai) is a tool optimized for managing, preprocessing, augmenting, and versioning computer vision datasets.
+
+**Key Benefits:**
+- 50% reduction in coding effort
+- Automatic annotation quality verification
+- Shorter training times
+- Enhanced model reproducibility
+
+> **Example Image:**
 > 
-> ![Roboflow 예시 이미지](https://i.imgur.com/WHFqYSJ.png)
+> ![Roboflow Example Image](https://i.imgur.com/WHFqYSJ.png)
 
 ---
 
@@ -44,5 +44,7 @@
 
 ---
 
-이 저장소는 **Keras**를 활용한 **YOLOv3-tiny** 구현체로,  
-기존 [allanzelener/YAD2K](https://github.com/allanzelener/YAD2K)를 참고하여 작성되었습니다.
+This repository is an implementation of **YOLOv3-tiny** using **Keras**,  
+based on the existing [allanzelener/YAD2K](https://github.com/allanzelener/YAD2K).
+
+Translated with DeepL.com (free version)
