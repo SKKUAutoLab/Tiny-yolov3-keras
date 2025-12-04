@@ -15,19 +15,19 @@ Compared to v1.0 (2025 Winter Program), this version:
 ## Repository Layout
 
 vitis-ai-yolov3-tiny/
-│── arch.json
-│── train_yolov3.py
-│── eval_yolov3tiny.py
-│── compile_B1600_tiny-yolov3.sh
+├── arch.json
+├── train_yolov3.py
+├── eval_yolov3tiny.py
+├── compile_B1600_tiny-yolov3.sh
 │
-│── cfg/
-│── common/
-│── configs/
-│── data/
-│── float/
-│── logs/
-│── tools/
-│── yolo3/
+├── cfg/
+├── common/
+├── configs/
+├── data/
+├── float/
+├── logs/
+├── tools/
+├── yolo3/
 └── (other support files)
 
 - train_yolov3.py               : Training script for YOLOv3-Tiny
