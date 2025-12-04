@@ -43,13 +43,13 @@ vitis-ai-yolov3-tiny/
 ### 1. Enter Docker
 
 ```bash
-./docker_run.sh cpu
-# or
-./docker_run.sh gpu
+cd vitis-ai-yolov3-tiny
 ```
 
 ```bash
-cd vitis-ai-yolov3-tiny
+./docker_run.sh cpu
+# or
+./docker_run.sh gpu
 ```
 
 ---
