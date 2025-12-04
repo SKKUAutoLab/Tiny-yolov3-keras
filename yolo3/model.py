@@ -1,412 +1,377 @@
-"""YOLO_v3 Model Defined in Keras."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+create YOLOv3/v4 models with different backbone & head
 
-from functools import wraps
+여기서는 tiny_yolo3_darknet 학습에 필요한 부분만 최소한으로 정리:
+ - yolo3_tiny_model_map 에서 tiny_yolo3_darknet → tiny_yolo3_body 사용
+ - tiny_yolo3_* 에 대해서는 get_yolo3_train_model에서 weights_path를 무시(에러 방지)
+"""
 
-import numpy as np
-import tensorflow as tf
-from keras import backend as K
-from keras.layers import Conv2D, Add, ZeroPadding2D, UpSampling2D, Concatenate, MaxPooling2D
-from keras.layers.advanced_activations import LeakyReLU
-from keras.layers.normalization import BatchNormalization
-from keras.models import Model
-from keras.regularizers import l2
+import os
+from functools import partial
 
-from yolo3.utils import compose
+import tensorflow.keras.backend as K
+from tensorflow.keras.layers import Input, Lambda
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
 
-
-@wraps(Conv2D)
-def DarknetConv2D(*args, **kwargs):
-    """Wrapper to set Darknet parameters for Convolution2D."""
-    darknet_conv_kwargs = {'kernel_regularizer': l2(5e-4)}
-    darknet_conv_kwargs['padding'] = 'valid' if kwargs.get('strides')==(2,2) else 'same'
-    darknet_conv_kwargs.update(kwargs)
-    return Conv2D(*args, **darknet_conv_kwargs)
-
-def DarknetConv2D_BN_Leaky(*args, **kwargs):
-    """Darknet Convolution2D followed by BatchNormalization and LeakyReLU."""
-    no_bias_kwargs = {'use_bias': False}
-    no_bias_kwargs.update(kwargs)
-    return compose(
-        DarknetConv2D(*args, **no_bias_kwargs),
-        BatchNormalization(),
-        LeakyReLU(alpha=0.1))
-
-def resblock_body(x, num_filters, num_blocks):
-    '''A series of resblocks starting with a downsampling Convolution2D'''
-    # Darknet uses left and top padding instead of 'same' mode
-    x = ZeroPadding2D(((1,0),(1,0)))(x)
-    x = DarknetConv2D_BN_Leaky(num_filters, (3,3), strides=(2,2))(x)
-    for i in range(num_blocks):
-        y = compose(
-                DarknetConv2D_BN_Leaky(num_filters//2, (1,1)),
-                DarknetConv2D_BN_Leaky(num_filters, (3,3)))(x)
-        x = Add()([x,y])
-    return x
-
-def darknet_body(x):
-    '''Darknent body having 52 Convolution2D layers'''
-    x = DarknetConv2D_BN_Leaky(32, (3,3))(x)
-    x = resblock_body(x, 64, 1)
-    x = resblock_body(x, 128, 2)
-    x = resblock_body(x, 256, 8)
-    x = resblock_body(x, 512, 8)
-    x = resblock_body(x, 1024, 4)
-    return x
-
-def make_last_layers(x, num_filters, out_filters):
-    '''6 Conv2D_BN_Leaky layers followed by a Conv2D_linear layer'''
-    x = compose(
-            DarknetConv2D_BN_Leaky(num_filters, (1,1)),
-            DarknetConv2D_BN_Leaky(num_filters*2, (3,3)),
-            DarknetConv2D_BN_Leaky(num_filters, (1,1)),
-            DarknetConv2D_BN_Leaky(num_filters*2, (3,3)),
-            DarknetConv2D_BN_Leaky(num_filters, (1,1)))(x)
-    y = compose(
-            DarknetConv2D_BN_Leaky(num_filters*2, (3,3)),
-            DarknetConv2D(out_filters, (1,1)))(x)
-    return x, y
-
-
-def yolo_body(inputs, num_anchors, num_classes):
-    """Create YOLO_V3 model CNN body in Keras."""
-    darknet = Model(inputs, darknet_body(inputs))
-    x, y1 = make_last_layers(darknet.output, 512, num_anchors*(num_classes+5))
-
-    x = compose(
-            DarknetConv2D_BN_Leaky(256, (1,1)),
-            UpSampling2D(2))(x)
-    x = Concatenate()([x,darknet.layers[152].output])
-    x, y2 = make_last_layers(x, 256, num_anchors*(num_classes+5))
-
-    x = compose(
-            DarknetConv2D_BN_Leaky(128, (1,1)),
-            UpSampling2D(2))(x)
-    x = Concatenate()([x,darknet.layers[92].output])
-    x, y3 = make_last_layers(x, 128, num_anchors*(num_classes+5))
-
-    return Model(inputs, [y1,y2,y3])
-
-def tiny_yolo_body(inputs, num_anchors, num_classes):
-    '''Create Tiny YOLO_v3 model CNN body in keras.'''
-    x1 = compose(
-            DarknetConv2D_BN_Leaky(16, (3,3)),
-            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
-            DarknetConv2D_BN_Leaky(32, (3,3)),
-            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
-            DarknetConv2D_BN_Leaky(64, (3,3)),
-            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
-            DarknetConv2D_BN_Leaky(128, (3,3)),
-            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
-            DarknetConv2D_BN_Leaky(256, (3,3)))(inputs)
-    x2 = compose(
-            MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='same'),
-            DarknetConv2D_BN_Leaky(512, (3,3)),
-            MaxPooling2D(pool_size=(2,2), strides=(1,1), padding='same'),
-            DarknetConv2D_BN_Leaky(1024, (3,3)),
-            DarknetConv2D_BN_Leaky(256, (1,1)))(x1)
-    y1 = compose(
-            DarknetConv2D_BN_Leaky(512, (3,3)),
-            DarknetConv2D(num_anchors*(num_classes+5), (1,1)))(x2)
-
-    x2 = compose(
-            DarknetConv2D_BN_Leaky(128, (1,1)),
-            UpSampling2D(2))(x2)
-    y2 = compose(
-            Concatenate(),
-            DarknetConv2D_BN_Leaky(256, (3,3)),
-            DarknetConv2D(num_anchors*(num_classes+5), (1,1)))([x2,x1])
-
-    return Model(inputs, [y1,y2])
+from yolo3.models.yolo3_darknet import (
+    yolo3_body,
+    yolo3lite_body,
+    tiny_yolo3_body,
+    tiny_yolo3lite_body,
+    custom_yolo3_spp_body,
+)
+from yolo3.models.yolo3_mobilenet import (
+    yolo3_mobilenet_body,
+    tiny_yolo3_mobilenet_body,
+    yolo3lite_mobilenet_body,
+    yolo3lite_spp_mobilenet_body,
+    tiny_yolo3lite_mobilenet_body,
+)
+from yolo3.models.yolo3_mobilenetv2 import (
+    yolo3_mobilenetv2_body,
+    tiny_yolo3_mobilenetv2_body,
+    yolo3lite_mobilenetv2_body,
+    yolo3lite_spp_mobilenetv2_body,
+    tiny_yolo3lite_mobilenetv2_body,
+    yolo3_ultralite_mobilenetv2_body,
+    tiny_yolo3_ultralite_mobilenetv2_body,
+)
+from yolo3.models.yolo3_shufflenetv2 import (
+    yolo3_shufflenetv2_body,
+    tiny_yolo3_shufflenetv2_body,
+    yolo3lite_shufflenetv2_body,
+    yolo3lite_spp_shufflenetv2_body,
+    tiny_yolo3lite_shufflenetv2_body,
+)
+from yolo3.models.yolo3_vgg16 import yolo3_vgg16_body, tiny_yolo3_vgg16_body
+from yolo3.models.yolo3_xception import (
+    yolo3_xception_body,
+    yolo3lite_xception_body,
+    tiny_yolo3_xception_body,
+    tiny_yolo3lite_xception_body,
+    yolo3_spp_xception_body,
+)
+from yolo3.models.yolo3_nano import yolo3_nano_body
+from yolo3.models.yolo3_efficientnet import (
+    yolo3_efficientnet_body,
+    tiny_yolo3_efficientnet_body,
+    yolo3lite_efficientnet_body,
+    yolo3lite_spp_efficientnet_body,
+    tiny_yolo3lite_efficientnet_body,
+)
+from yolo3.models.yolo3_mobilenetv3_large import (
+    yolo3_mobilenetv3large_body,
+    yolo3lite_mobilenetv3large_body,
+    tiny_yolo3_mobilenetv3large_body,
+    tiny_yolo3lite_mobilenetv3large_body,
+)
+from yolo3.models.yolo3_mobilenetv3_small import (
+    yolo3_mobilenetv3small_body,
+    yolo3lite_mobilenetv3small_body,
+    tiny_yolo3_mobilenetv3small_body,
+    tiny_yolo3lite_mobilenetv3small_body,
+    yolo3_ultralite_mobilenetv3small_body,
+    tiny_yolo3_ultralite_mobilenetv3small_body,
+)
+from yolo3.models.yolo3_peleenet import (
+    yolo3_peleenet_body,
+    yolo3lite_peleenet_body,
+    tiny_yolo3_peleenet_body,
+    tiny_yolo3lite_peleenet_body,
+    yolo3_ultralite_peleenet_body,
+    tiny_yolo3_ultralite_peleenet_body,
+)
+from yolo3.models.yolo3_ghostnet import (
+    yolo3_ghostnet_body,
+    yolo3lite_ghostnet_body,
+    tiny_yolo3_ghostnet_body,
+    tiny_yolo3lite_ghostnet_body,
+    yolo3_ultralite_ghostnet_body,
+    tiny_yolo3_ultralite_ghostnet_body,
+)
 
 
-def yolo_head(feats, anchors, num_classes, input_shape, calc_loss=False):
-    """Convert final layer features to bounding box parameters."""
+from yolo3.loss import yolo3_loss
+from yolo3.postprocess import batched_yolo3_postprocess
+from common.model_utils import add_metrics, get_pruning_model
+
+ROOT_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
+
+
+# =====================================================
+# 1. Model map 정의
+# =====================================================
+
+# YOLOv3 full-size
+yolo3_model_map = {
+    'yolo3_mobilenet': [yolo3_mobilenet_body, 87, None],
+    'yolo3_mobilenet_lite': [yolo3lite_mobilenet_body, 87, None],
+    'yolo3_mobilenet_lite_spp': [yolo3lite_spp_mobilenet_body, 87, None],
+    'yolo3_mobilenetv2': [yolo3_mobilenetv2_body, 155, None],
+    'yolo3_mobilenetv2_lite': [yolo3lite_mobilenetv2_body, 155, None],
+    'yolo3_mobilenetv2_lite_spp': [yolo3lite_spp_mobilenetv2_body, 155, None],
+    'yolo3_mobilenetv2_ultralite': [yolo3_ultralite_mobilenetv2_body, 155, None],
+
+    'yolo3_mobilenetv3large': [yolo3_mobilenetv3large_body, 195, None],
+    'yolo3_mobilenetv3large_lite': [yolo3lite_mobilenetv3large_body, 195, None],
+    'yolo3_mobilenetv3small': [yolo3_mobilenetv3small_body, 166, None],
+    'yolo3_mobilenetv3small_lite': [yolo3lite_mobilenetv3small_body, 166, None],
+    'yolo3_mobilenetv3small_ultralite': [yolo3_ultralite_mobilenetv3small_body, 166, None],
+
+    'yolo3_peleenet': [yolo3_peleenet_body, 366, None],
+    'yolo3_peleenet_lite': [yolo3lite_peleenet_body, 366, None],
+    'yolo3_peleenet_ultralite': [yolo3_ultralite_peleenet_body, 366, None],
+
+    'yolo3_ghostnet': [yolo3_ghostnet_body, 292, None],
+    'yolo3_ghostnet_lite': [yolo3lite_ghostnet_body, 292, None],
+    'yolo3_ghostnet_ultralite': [yolo3_ultralite_ghostnet_body, 292, None],
+
+    'yolo3_shufflenetv2': [yolo3_shufflenetv2_body, 205, None],
+    'yolo3_shufflenetv2_lite': [yolo3lite_shufflenetv2_body, 205, None],
+    'yolo3_shufflenetv2_lite_spp': [yolo3lite_spp_shufflenetv2_body, 205, None],
+
+    # NOTE: backbone_length is for EfficientNetB3
+    'yolo3_efficientnet': [yolo3_efficientnet_body, 382, None],
+    'yolo3_efficientnet_lite': [yolo3lite_efficientnet_body, 382, None],
+    'yolo3_efficientnet_lite_spp': [yolo3lite_spp_efficientnet_body, 382, None],
+
+    'yolo3_darknet': [yolo3_body, 185, os.path.join(ROOT_PATH, 'weights', 'darknet53.h5')],
+    'yolo3_darknet_spp': [custom_yolo3_spp_body, 185, os.path.join(ROOT_PATH, 'weights', 'yolov3-spp.h5')],
+    'yolo3_darknet_lite': [yolo3lite_body, 0, None],
+    'yolo3_vgg16': [yolo3_vgg16_body, 19, None],
+    'yolo3_xception': [yolo3_xception_body, 132, None],
+    'yolo3_xception_lite': [yolo3lite_xception_body, 132, None],
+    'yolo3_xception_spp': [yolo3_spp_xception_body, 132, None],
+
+    'yolo3_nano': [yolo3_nano_body, 268, None],
+}
+
+
+# Tiny YOLOv3 / Tiny YOLOv4
+yolo3_tiny_model_map = {
+    'tiny_yolo3_mobilenet': [tiny_yolo3_mobilenet_body, 87, None],
+    'tiny_yolo3_mobilenet_lite': [tiny_yolo3lite_mobilenet_body, 87, None],
+    'tiny_yolo3_mobilenetv2': [tiny_yolo3_mobilenetv2_body, 155, None],
+    'tiny_yolo3_mobilenetv2_lite': [tiny_yolo3lite_mobilenetv2_body, 155, None],
+    'tiny_yolo3_mobilenetv2_ultralite': [tiny_yolo3_ultralite_mobilenetv2_body, 155, None],
+
+    'tiny_yolo3_mobilenetv3large': [tiny_yolo3_mobilenetv3large_body, 195, None],
+    'tiny_yolo3_mobilenetv3large_lite': [tiny_yolo3lite_mobilenetv3large_body, 195, None],
+    'tiny_yolo3_mobilenetv3small': [tiny_yolo3_mobilenetv3small_body, 166, None],
+    'tiny_yolo3_mobilenetv3small_lite': [tiny_yolo3lite_mobilenetv3small_body, 166, None],
+    'tiny_yolo3_mobilenetv3small_ultralite': [tiny_yolo3_ultralite_mobilenetv3small_body, 166, None],
+
+    'tiny_yolo3_peleenet': [tiny_yolo3_peleenet_body, 366, None],
+    'tiny_yolo3_peleenet_lite': [tiny_yolo3lite_peleenet_body, 366, None],
+    'tiny_yolo3_peleenet_ultralite': [tiny_yolo3_ultralite_peleenet_body, 366, None],
+
+    'tiny_yolo3_ghostnet': [tiny_yolo3_ghostnet_body, 292, None],
+    'tiny_yolo3_ghostnet_lite': [tiny_yolo3lite_ghostnet_body, 292, None],
+    'tiny_yolo3_ghostnet_ultralite': [tiny_yolo3_ultralite_ghostnet_body, 292, None],
+
+    'tiny_yolo3_shufflenetv2': [tiny_yolo3_shufflenetv2_body, 205, None],
+    'tiny_yolo3_shufflenetv2_lite': [tiny_yolo3lite_shufflenetv2_body, 205, None],
+
+    # NOTE: backbone_length is for EfficientNetB0
+    'tiny_yolo3_efficientnet': [tiny_yolo3_efficientnet_body, 235, None],
+    'tiny_yolo3_efficientnet_lite': [tiny_yolo3lite_efficientnet_body, 235, None],
+
+    # 🔑 여기: tiny_yolo3_darknet은 tiny_yolo3_body 그대로 사용 (pretrained weight 없음)
+    'tiny_yolo3_darknet': [tiny_yolo3_body, 20, None],
+
+    'tiny_yolo3_darknet_lite': [tiny_yolo3lite_body, 0, None],
+    'tiny_yolo3_vgg16': [tiny_yolo3_vgg16_body, 19, None],
+    'tiny_yolo3_xception': [tiny_yolo3_xception_body, 132, None],
+    'tiny_yolo3_xception_lite': [tiny_yolo3lite_xception_body, 132, None],
+}
+
+
+# =====================================================
+# 2. 모델 생성 함수
+# =====================================================
+def get_yolo3_model(model_type, num_feature_layers, num_anchors, num_classes,
+                    input_tensor=None, input_shape=None,
+                    model_pruning=False, pruning_end_step=10000):
+    # 입력 텐서 준비
+    if input_shape:
+        input_tensor = Input(shape=input_shape, name='image_input')
+
+    if input_tensor is None:
+        input_tensor = Input(shape=(None, None, 3), name='image_input')
+
+    # Tiny YOLOv3 (6 anchors, 2 feature layers)
+    if num_feature_layers == 2:
+        if model_type in yolo3_tiny_model_map:
+            model_function, backbone_len, weights_path = yolo3_tiny_model_map[model_type]
+            # tiny는 여기서 pretrain weight를 사용하지 않도록 통일
+            model_body = model_function(input_tensor, num_anchors // 2, num_classes)
+        else:
+            raise ValueError('This tiny model type is not supported now')
+
+    # YOLOv3 (9 anchors, 3 feature layers)
+    elif num_feature_layers == 3:
+        if model_type in yolo3_model_map:
+            model_function, backbone_len, weights_path = yolo3_model_map[model_type]
+            if weights_path and os.path.exists(weights_path):
+                print(f'Loading pretrained backbone weights from {weights_path}')
+                model_body = model_function(
+                    input_tensor, num_anchors // 3, num_classes,
+                    weights_path=weights_path
+                )
+            else:
+                model_body = model_function(
+                    input_tensor, num_anchors // 3, num_classes
+                )
+        else:
+            raise ValueError('This model type is not supported now')
+    else:
+        raise ValueError('model type mismatch anchors')
+
+    # pruning
+    if model_pruning:
+        model_body = get_pruning_model(
+            model_body, begin_step=0, end_step=pruning_end_step
+        )
+
+    return model_body, backbone_len
+
+
+def get_yolo3_train_model(model_type, anchors, num_classes,
+                          weights_path=None, freeze_level=1,
+                          optimizer=Adam(lr=1e-3, decay=0),
+                          label_smoothing=0,
+                          elim_grid_sense=False,
+                          model_pruning=False,
+                          pruning_end_step=10000):
+    """create the training model, for YOLOv3"""
     num_anchors = len(anchors)
-    # Reshape to batch, height, width, num_anchors, box_params.
-    anchors_tensor = K.reshape(K.constant(anchors), [1, 1, 1, num_anchors, 2])
+    # YOLOv3: 9 anchors, 3 layer / Tiny: 6 anchors, 2 layer
+    num_feature_layers = num_anchors // 3
 
-    grid_shape = K.shape(feats)[1:3] # height, width
-    grid_y = K.tile(K.reshape(K.arange(0, stop=grid_shape[0]), [-1, 1, 1, 1]),
-        [1, grid_shape[1], 1, 1])
-    grid_x = K.tile(K.reshape(K.arange(0, stop=grid_shape[1]), [1, -1, 1, 1]),
-        [grid_shape[0], 1, 1, 1])
-    grid = K.concatenate([grid_x, grid_y])
-    grid = K.cast(grid, K.dtype(feats))
+    # y_true shape:
+    # [
+    #  (H/32, W/32, 3, num_classes+5),
+    #  (H/16, W/16, 3, num_classes+5),
+    #  (H/8,  W/8,  3, num_classes+5)
+    # ]
+    y_true = [
+        Input(shape=(None, None, 3, num_classes + 5),
+              name=f'y_true_{l}')
+        for l in range(num_feature_layers)
+    ]
 
-    feats = K.reshape(
-        feats, [-1, grid_shape[0], grid_shape[1], num_anchors, num_classes + 5])
+    model_body, backbone_len = get_yolo3_model(
+        model_type, num_feature_layers, num_anchors, num_classes,
+        model_pruning=model_pruning, pruning_end_step=pruning_end_step
+    )
+    print(
+        'Create {} {} model with {} anchors and {} classes.'.format(
+            'Tiny' if num_feature_layers == 2 else '',
+            model_type, num_anchors, num_classes
+        )
+    )
+    print('model layer number:', len(model_body.layers))
 
-    # Adjust preditions to each spatial grid point and anchor size.
-    box_xy = (K.sigmoid(feats[..., :2]) + grid) / K.cast(grid_shape[::-1], K.dtype(feats))
-    box_wh = K.exp(feats[..., 2:4]) * anchors_tensor / K.cast(input_shape[::-1], K.dtype(feats))
-    box_confidence = K.sigmoid(feats[..., 4:5])
-    box_class_probs = K.sigmoid(feats[..., 5:])
+    # -------------------------------------------------------
+    # weights_path 처리:
+    #  - tiny_yolo3_* 의 경우 현재 구조에서는 외부 h5(pretrained)와
+    #    shape mismatch가 발생하므로 학습 시에는 로드하지 않도록 통일
+    # -------------------------------------------------------
+    if weights_path:
+        if model_type.startswith('tiny_yolo3_'):
+            print(
+                f'[INFO] weights_path="{weights_path}" 가 주어졌지만 '
+                f'{model_type} 에서는 학습 시 pretrained weights를 로드하지 않습니다.'
+            )
+        else:
+            model_body.load_weights(weights_path, by_name=True)
+            print(f'Load weights {weights_path}.')
 
-    if calc_loss == True:
-        return grid, feats, box_xy, box_wh
-    return box_xy, box_wh, box_confidence, box_class_probs
+    # Freeze / Unfreeze
+    if freeze_level in [1, 2]:
+        num = (backbone_len, len(model_body.layers) - 3)[freeze_level - 1]
+        for i in range(num):
+            model_body.layers[i].trainable = False
+        print(
+            'Freeze the first {} layers of total {} layers.'.format(
+                num, len(model_body.layers)
+            )
+        )
+    elif freeze_level == 0:
+        for i in range(len(model_body.layers)):
+            model_body.layers[i].trainable = True
+        print('Unfreeze all of the layers.')
 
+    # YOLO loss
+    model_loss, location_loss, confidence_loss, class_loss = Lambda(
+        yolo3_loss,
+        name='yolo_loss',
+        arguments={
+            'anchors': anchors,
+            'num_classes': num_classes,
+            'ignore_thresh': 0.5,
+            'label_smoothing': label_smoothing,
+            'elim_grid_sense': elim_grid_sense,
+        }
+    )([*model_body.output, *y_true])
 
-def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
-    '''Get corrected boxes'''
-    box_yx = box_xy[..., ::-1]
-    box_hw = box_wh[..., ::-1]
-    input_shape = K.cast(input_shape, K.dtype(box_yx))
-    image_shape = K.cast(image_shape, K.dtype(box_yx))
-    new_shape = K.round(image_shape * K.min(input_shape/image_shape))
-    offset = (input_shape-new_shape)/2./input_shape
-    scale = input_shape/new_shape
-    box_yx = (box_yx - offset) * scale
-    box_hw *= scale
+    model = Model([model_body.input, *y_true], model_loss)
 
-    box_mins = box_yx - (box_hw / 2.)
-    box_maxes = box_yx + (box_hw / 2.)
-    boxes =  K.concatenate([
-        box_mins[..., 0:1],  # y_min
-        box_mins[..., 1:2],  # x_min
-        box_maxes[..., 0:1],  # y_max
-        box_maxes[..., 1:2]  # x_max
-    ])
+    loss_dict = {
+        'location_loss': location_loss,
+        'confidence_loss': confidence_loss,
+        'class_loss': class_loss,
+    }
+    add_metrics(model, loss_dict)
 
-    # Scale boxes back to original image shape.
-    boxes *= K.concatenate([image_shape, image_shape])
-    return boxes
+    model.compile(
+        optimizer=optimizer,
+        loss={'yolo_loss': lambda y_true, y_pred: y_pred},
+    )
 
-
-def yolo_boxes_and_scores(feats, anchors, num_classes, input_shape, image_shape):
-    '''Process Conv layer output'''
-    box_xy, box_wh, box_confidence, box_class_probs = yolo_head(feats,
-        anchors, num_classes, input_shape)
-    boxes = yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape)
-    boxes = K.reshape(boxes, [-1, 4])
-    box_scores = box_confidence * box_class_probs
-    box_scores = K.reshape(box_scores, [-1, num_classes])
-    return boxes, box_scores
-
-
-def yolo_eval(yolo_outputs,
-              anchors,
-              num_classes,
-              image_shape,
-              max_boxes=20,
-              score_threshold=.6,
-              iou_threshold=.5):
-    """Evaluate YOLO model on given input and return filtered boxes."""
-    num_layers = len(yolo_outputs)
-    anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]] # default setting
-    input_shape = K.shape(yolo_outputs[0])[1:3] * 32
-    boxes = []
-    box_scores = []
-    for l in range(num_layers):
-        _boxes, _box_scores = yolo_boxes_and_scores(yolo_outputs[l],
-            anchors[anchor_mask[l]], num_classes, input_shape, image_shape)
-        boxes.append(_boxes)
-        box_scores.append(_box_scores)
-    boxes = K.concatenate(boxes, axis=0)
-    box_scores = K.concatenate(box_scores, axis=0)
-
-    mask = box_scores >= score_threshold
-    max_boxes_tensor = K.constant(max_boxes, dtype='int32')
-    boxes_ = []
-    scores_ = []
-    classes_ = []
-    for c in range(num_classes):
-        # TODO: use keras backend instead of tf.
-        class_boxes = tf.boolean_mask(boxes, mask[:, c])
-        class_box_scores = tf.boolean_mask(box_scores[:, c], mask[:, c])
-        nms_index = tf.image.non_max_suppression(
-            class_boxes, class_box_scores, max_boxes_tensor, iou_threshold=iou_threshold)
-        class_boxes = K.gather(class_boxes, nms_index)
-        class_box_scores = K.gather(class_box_scores, nms_index)
-        classes = K.ones_like(class_box_scores, 'int32') * c
-        boxes_.append(class_boxes)
-        scores_.append(class_box_scores)
-        classes_.append(classes)
-    boxes_ = K.concatenate(boxes_, axis=0)
-    scores_ = K.concatenate(scores_, axis=0)
-    classes_ = K.concatenate(classes_, axis=0)
-
-    return boxes_, scores_, classes_
+    return model, model_body
 
 
-def preprocess_true_boxes(true_boxes, input_shape, anchors, num_classes):
-    '''Preprocess true boxes to training input format
+def get_yolo3_inference_model(model_type, anchors, num_classes,
+                              weights_path=None, input_shape=None,
+                              confidence=0.1, iou_threshold=0.4,
+                              elim_grid_sense=False):
+    """create the inference model, for YOLOv3"""
+    num_anchors = len(anchors)
+    num_feature_layers = num_anchors // 3
 
-    Parameters
-    ----------
-    true_boxes: array, shape=(m, T, 5)
-        Absolute x_min, y_min, x_max, y_max, class_id relative to input_shape.
-    input_shape: array-like, hw, multiples of 32
-    anchors: array, shape=(N, 2), wh
-    num_classes: integer
+    image_shape = Input(shape=(2,), dtype='int64', name='image_shape')
 
-    Returns
-    -------
-    y_true: list of array, shape like yolo_outputs, xywh are reletive value
+    model_body, _ = get_yolo3_model(
+        model_type, num_feature_layers, num_anchors,
+        num_classes, input_shape=input_shape
+    )
+    print(
+        'Create {} YOLOv3 {} model with {} anchors and {} classes.'.format(
+            'Tiny' if num_feature_layers == 2 else '',
+            model_type, num_anchors, num_classes
+        )
+    )
 
-    '''
-    assert (true_boxes[..., 4]<num_classes).all(), 'class id must be less than num_classes'
-    num_layers = len(anchors)//3 # default setting
-    anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
+    if weights_path:
+        model_body.load_weights(weights_path, by_name=False)
+        print(f'Load weights {weights_path}.')
 
-    true_boxes = np.array(true_boxes, dtype='float32')
-    input_shape = np.array(input_shape, dtype='int32')
-    boxes_xy = (true_boxes[..., 0:2] + true_boxes[..., 2:4]) // 2
-    boxes_wh = true_boxes[..., 2:4] - true_boxes[..., 0:2]
-    true_boxes[..., 0:2] = boxes_xy/input_shape[::-1]
-    true_boxes[..., 2:4] = boxes_wh/input_shape[::-1]
+    boxes, scores, classes = Lambda(
+        batched_yolo3_postprocess,
+        name='yolo3_postprocess',
+        arguments={
+            'anchors': anchors,
+            'num_classes': num_classes,
+            'confidence': confidence,
+            'iou_threshold': iou_threshold,
+            'elim_grid_sense': elim_grid_sense,
+        },
+    )([*model_body.output, image_shape])
 
-    m = true_boxes.shape[0]
-    grid_shapes = [input_shape//{0:32, 1:16, 2:8}[l] for l in range(num_layers)]
-    y_true = [np.zeros((m,grid_shapes[l][0],grid_shapes[l][1],len(anchor_mask[l]),5+num_classes),
-        dtype='float32') for l in range(num_layers)]
+    model = Model([model_body.input, image_shape], [boxes, scores, classes])
 
-    # Expand dim to apply broadcasting.
-    anchors = np.expand_dims(anchors, 0)
-    anchor_maxes = anchors / 2.
-    anchor_mins = -anchor_maxes
-    valid_mask = boxes_wh[..., 0]>0
-
-    for b in range(m):
-        # Discard zero rows.
-        wh = boxes_wh[b, valid_mask[b]]
-        if len(wh)==0: continue
-        # Expand dim to apply broadcasting.
-        wh = np.expand_dims(wh, -2)
-        box_maxes = wh / 2.
-        box_mins = -box_maxes
-
-        intersect_mins = np.maximum(box_mins, anchor_mins)
-        intersect_maxes = np.minimum(box_maxes, anchor_maxes)
-        intersect_wh = np.maximum(intersect_maxes - intersect_mins, 0.)
-        intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
-        box_area = wh[..., 0] * wh[..., 1]
-        anchor_area = anchors[..., 0] * anchors[..., 1]
-        iou = intersect_area / (box_area + anchor_area - intersect_area)
-
-        # Find best anchor for each true box
-        best_anchor = np.argmax(iou, axis=-1)
-
-        for t, n in enumerate(best_anchor):
-            for l in range(num_layers):
-                if n in anchor_mask[l]:
-                    i = np.floor(true_boxes[b,t,0]*grid_shapes[l][1]).astype('int32')
-                    j = np.floor(true_boxes[b,t,1]*grid_shapes[l][0]).astype('int32')
-                    k = anchor_mask[l].index(n)
-                    c = true_boxes[b,t, 4].astype('int32')
-                    y_true[l][b, j, i, k, 0:4] = true_boxes[b,t, 0:4]
-                    y_true[l][b, j, i, k, 4] = 1
-                    y_true[l][b, j, i, k, 5+c] = 1
-
-    return y_true
-
-
-def box_iou(b1, b2):
-    '''Return iou tensor
-
-    Parameters
-    ----------
-    b1: tensor, shape=(i1,...,iN, 4), xywh
-    b2: tensor, shape=(j, 4), xywh
-
-    Returns
-    -------
-    iou: tensor, shape=(i1,...,iN, j)
-
-    '''
-
-    # Expand dim to apply broadcasting.
-    b1 = K.expand_dims(b1, -2)
-    b1_xy = b1[..., :2]
-    b1_wh = b1[..., 2:4]
-    b1_wh_half = b1_wh/2.
-    b1_mins = b1_xy - b1_wh_half
-    b1_maxes = b1_xy + b1_wh_half
-
-    # Expand dim to apply broadcasting.
-    b2 = K.expand_dims(b2, 0)
-    b2_xy = b2[..., :2]
-    b2_wh = b2[..., 2:4]
-    b2_wh_half = b2_wh/2.
-    b2_mins = b2_xy - b2_wh_half
-    b2_maxes = b2_xy + b2_wh_half
-
-    intersect_mins = K.maximum(b1_mins, b2_mins)
-    intersect_maxes = K.minimum(b1_maxes, b2_maxes)
-    intersect_wh = K.maximum(intersect_maxes - intersect_mins, 0.)
-    intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
-    b1_area = b1_wh[..., 0] * b1_wh[..., 1]
-    b2_area = b2_wh[..., 0] * b2_wh[..., 1]
-    iou = intersect_area / (b1_area + b2_area - intersect_area)
-
-    return iou
-
-
-def yolo_loss(args, anchors, num_classes, ignore_thresh=.5, print_loss=False):
-    '''Return yolo_loss tensor
-
-    Parameters
-    ----------
-    yolo_outputs: list of tensor, the output of yolo_body or tiny_yolo_body
-    y_true: list of array, the output of preprocess_true_boxes
-    anchors: array, shape=(N, 2), wh
-    num_classes: integer
-    ignore_thresh: float, the iou threshold whether to ignore object confidence loss
-
-    Returns
-    -------
-    loss: tensor, shape=(1,)
-
-    '''
-    num_layers = len(anchors)//3 # default setting
-    yolo_outputs = args[:num_layers]
-    y_true = args[num_layers:]
-    anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
-    input_shape = K.cast(K.shape(yolo_outputs[0])[1:3] * 32, K.dtype(y_true[0]))
-    grid_shapes = [K.cast(K.shape(yolo_outputs[l])[1:3], K.dtype(y_true[0])) for l in range(num_layers)]
-    loss = 0
-    m = K.shape(yolo_outputs[0])[0] # batch size, tensor
-    mf = K.cast(m, K.dtype(yolo_outputs[0]))
-
-    for l in range(num_layers):
-        object_mask = y_true[l][..., 4:5]
-        true_class_probs = y_true[l][..., 5:]
-
-        grid, raw_pred, pred_xy, pred_wh = yolo_head(yolo_outputs[l],
-             anchors[anchor_mask[l]], num_classes, input_shape, calc_loss=True)
-        pred_box = K.concatenate([pred_xy, pred_wh])
-
-        # Darknet raw box to calculate loss.
-        raw_true_xy = y_true[l][..., :2]*grid_shapes[l][::-1] - grid
-        raw_true_wh = K.log(y_true[l][..., 2:4] / anchors[anchor_mask[l]] * input_shape[::-1])
-        raw_true_wh = K.switch(object_mask, raw_true_wh, K.zeros_like(raw_true_wh)) # avoid log(0)=-inf
-        box_loss_scale = 2 - y_true[l][...,2:3]*y_true[l][...,3:4]
-
-        # Find ignore mask, iterate over each of batch.
-        ignore_mask = tf.TensorArray(K.dtype(y_true[0]), size=1, dynamic_size=True)
-        object_mask_bool = K.cast(object_mask, 'bool')
-        def loop_body(b, ignore_mask):
-            true_box = tf.boolean_mask(y_true[l][b,...,0:4], object_mask_bool[b,...,0])
-            iou = box_iou(pred_box[b], true_box)
-            best_iou = K.max(iou, axis=-1)
-            ignore_mask = ignore_mask.write(b, K.cast(best_iou<ignore_thresh, K.dtype(true_box)))
-            return b+1, ignore_mask
-        _, ignore_mask = K.control_flow_ops.while_loop(lambda b,*args: b<m, loop_body, [0, ignore_mask])
-        ignore_mask = ignore_mask.stack()
-        ignore_mask = K.expand_dims(ignore_mask, -1)
-
-        # K.binary_crossentropy is helpful to avoid exp overflow.
-        xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(raw_true_xy, raw_pred[...,0:2], from_logits=True)
-        wh_loss = object_mask * box_loss_scale * 0.5 * K.square(raw_true_wh-raw_pred[...,2:4])
-        confidence_loss = object_mask * K.binary_crossentropy(object_mask, raw_pred[...,4:5], from_logits=True)+ \
-            (1-object_mask) * K.binary_crossentropy(object_mask, raw_pred[...,4:5], from_logits=True) * ignore_mask
-        class_loss = object_mask * K.binary_crossentropy(true_class_probs, raw_pred[...,5:], from_logits=True)
-
-        xy_loss = K.sum(xy_loss) / mf
-        wh_loss = K.sum(wh_loss) / mf
-        confidence_loss = K.sum(confidence_loss) / mf
-        class_loss = K.sum(class_loss) / mf
-        loss += xy_loss + wh_loss + confidence_loss + class_loss
-        if print_loss:
-            loss = tf.Print(loss, [loss, xy_loss, wh_loss, confidence_loss, class_loss, K.sum(ignore_mask)], message='loss: ')
-    return loss
+    return model
