@@ -1,6 +1,6 @@
 # 🚀 YOLOv3-Tiny Vitis-AI Pipeline (End-to-End Workflow)
 
-> 💡 **Official Repository for the 2026 Winter Extracurricular Program – Autonomous Driving SoC Design**  
+> 💡 **The 2026 Winter Extracurricular Program – Autonomous Driving SoC Design**  
 >  
 > This project provides a fully integrated workflow for **Training → Quantization → Compilation** of the **YOLOv3-Tiny** model inside the Vitis-AI environment.  
 >  
