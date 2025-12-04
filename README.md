@@ -1,18 +1,10 @@
-# 🚀 YOLOv3-Tiny Vitis-AI Pipeline (End-to-End Workflow)
+# 🚀 YOLOv3-Tiny Vitis-AI (End-to-End Workflow)
 
 > 💡 **The 2026 Winter Extracurricular Program – Autonomous Driving SoC Design**  
 >  
 > This project provides a fully integrated workflow for **Training → Quantization → Compilation** of the **YOLOv3-Tiny** model inside the Vitis-AI environment.  
 >  
 > **Participants must prepare their own datasets**, then follow this pipeline to optimize and compile the model for deployment on the **B1600 DPU**.
-
----
-
-## ✨ Key Features (v2.0)
-
-- **Integrated Workflow**  
-- **Simplified Configuration**  
-- **Practical, education-focused repository structure**
 
 ---
 
