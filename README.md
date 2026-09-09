@@ -57,7 +57,7 @@ python train_yolov3.py     --anchors_path configs/tiny_yolo3_anchors.txt     --c
 ### 3. Quantization & Evaluation
 
 ```bash
-python eval_yolov3tiny.py     --model_path logs/yolov3_tiny/epXXX-lossXX-val_lossXX.h5     --anchors_path configs/tiny_yolo3_anchors.txt     --classes_path configs/lane_class.txt     --annotation_file data/lane_detection/train/_annotations.txt     --quantize     --eval_quant
+python eval_yolov3tiny.py     --model_path logs/tiny_yolov3/inference_tiny_yolov3_epochXXX_final.h5     --anchors_path configs/tiny_yolo3_anchors.txt     --classes_path configs/lane_class.txt     --annotation_file data/lane_detection/train/_annotations.txt     --quantize     --eval_quant
 ```
 
 ---
@@ -74,6 +74,6 @@ python eval_yolov3tiny.py     --model_path logs/yolov3_tiny/epXXX-lossXX-val_los
 
 | Step | Script | Output |
 |------|--------|---------|
-| Training | train_yolov3.py | Floating-point .h5 |
+| Training | train_yolov3.py | Floating-point inference .h5 (`logs/tiny_yolov3/inference_tiny_yolov3_epochXXX_final.h5`) |
 | Quantization | eval_yolov3tiny.py | Quantized model |
 | Compilation | compile_B1600_tiny-yolov3.sh | xmodel |

@@ -5,7 +5,8 @@ create YOLOv3/v4 models with different backbone & head
 
 여기서는 tiny_yolo3_darknet 학습에 필요한 부분만 최소한으로 정리:
  - yolo3_tiny_model_map 에서 tiny_yolo3_darknet → tiny_yolo3_body 사용
- - tiny_yolo3_* 에 대해서는 get_yolo3_train_model에서 weights_path를 무시(에러 방지)
+ - weights_path 는 by_name + skip_mismatch 로 로드하고, 로드에 실패하면
+   freeze_level 을 0 으로 낮춰 랜덤 backbone 을 freeze 하지 않도록 한다
 """
 
 import os
@@ -15,6 +16,21 @@ import tensorflow.keras.backend as K
 from tensorflow.keras.layers import Input, Lambda
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
+
+
+def build_adam(learning_rate=1e-3, decay=0.0):
+    """Adam factory that works across TF versions.
+
+    TF <= 2.10 accepts `lr`/`decay`; TF >= 2.11 removed both and renamed the
+    first to `learning_rate`. Build with the modern names and fall back.
+    """
+    try:
+        return Adam(learning_rate=learning_rate, decay=decay)
+    except (TypeError, ValueError):
+        try:
+            return Adam(learning_rate=learning_rate)
+        except (TypeError, ValueError):
+            return Adam(lr=learning_rate)
 
 from yolo3.models.yolo3_darknet import (
     yolo3_body,
@@ -241,12 +257,23 @@ def get_yolo3_model(model_type, num_feature_layers, num_anchors, num_classes,
 
 def get_yolo3_train_model(model_type, anchors, num_classes,
                           weights_path=None, freeze_level=1,
-                          optimizer=Adam(lr=1e-3, decay=0),
+                          optimizer=None,
                           label_smoothing=0,
                           elim_grid_sense=False,
                           model_pruning=False,
-                          pruning_end_step=10000):
-    """create the training model, for YOLOv3"""
+                          pruning_end_step=10000,
+                          input_shape=None):
+    """create the training model, for YOLOv3
+
+    input_shape: (height, width) of the model input. Pass it to bake a FIXED
+        input size into the graph -- Vitis-AI quantize/compile rejects a model
+        whose input is (None, None, 3). None keeps the fully dynamic input.
+    optimizer: None -> a fresh Adam(1e-3) is built here. Never default to a
+        module-level optimizer instance: it would be shared across every call.
+    """
+    if optimizer is None:
+        optimizer = build_adam(learning_rate=1e-3)
+
     num_anchors = len(anchors)
     # YOLOv3: 9 anchors, 3 layer / Tiny: 6 anchors, 2 layer
     num_feature_layers = num_anchors // 3
@@ -265,6 +292,7 @@ def get_yolo3_train_model(model_type, anchors, num_classes,
 
     model_body, backbone_len = get_yolo3_model(
         model_type, num_feature_layers, num_anchors, num_classes,
+        input_shape=(input_shape[0], input_shape[1], 3) if input_shape else None,
         model_pruning=model_pruning, pruning_end_step=pruning_end_step
     )
     print(
@@ -277,20 +305,40 @@ def get_yolo3_train_model(model_type, anchors, num_classes,
 
     # -------------------------------------------------------
     # weights_path 처리:
-    #  - tiny_yolo3_* 의 경우 현재 구조에서는 외부 h5(pretrained)와
-    #    shape mismatch가 발생하므로 학습 시에는 로드하지 않도록 통일
+    #  - by_name=True, skip_mismatch=True 로 로드해 클래스 수가 달라
+    #    shape 이 안 맞는 head 레이어만 건너뛴다.
+    #  - 실제로 로드됐는지를 pretrained_loaded 로 추적한다.
     # -------------------------------------------------------
+    pretrained_loaded = False
     if weights_path:
-        if model_type.startswith('tiny_yolo3_'):
-            print(
-                f'[INFO] weights_path="{weights_path}" 가 주어졌지만 '
-                f'{model_type} 에서는 학습 시 pretrained weights를 로드하지 않습니다.'
-            )
+        if not os.path.exists(weights_path):
+            print(f'[WARN] weights_path="{weights_path}" 가 존재하지 않습니다. '
+                  f'random init 으로 학습합니다.')
         else:
-            model_body.load_weights(weights_path, by_name=True)
-            print(f'Load weights {weights_path}.')
+            # tiny 계열은 head shape 이 클래스 수에 따라 달라져 일부 레이어가
+            # mismatch 날 수 있으므로 by_name + skip_mismatch 로 로드한다.
+            try:
+                model_body.load_weights(weights_path, by_name=True,
+                                        skip_mismatch=True)
+                pretrained_loaded = True
+                print(f'Load weights {weights_path} (by_name, skip_mismatch).')
+            except Exception as e:
+                print(f'[WARN] failed to load weights from "{weights_path}": {e}')
+                print('[WARN] continuing with random initialization.')
 
     # Freeze / Unfreeze
+    #
+    # Freezing a *randomly initialized* backbone is pointless: the frozen
+    # transfer stage would just burn epochs on top of noise. So a freeze level
+    # is only honoured when pretrained weights actually got loaded.
+    if freeze_level in [1, 2] and not pretrained_loaded:
+        print(
+            f'[WARN] freeze_level={freeze_level} 이 요청됐지만 pretrained weights 가 '
+            f'로드되지 않았습니다. 랜덤 초기화된 backbone 을 freeze 하는 것은 의미가 '
+            f'없으므로 freeze_level=0 으로 강제합니다.'
+        )
+        freeze_level = 0
+
     if freeze_level in [1, 2]:
         num = (backbone_len, len(model_body.layers) - 3)[freeze_level - 1]
         for i in range(num):
@@ -300,7 +348,7 @@ def get_yolo3_train_model(model_type, anchors, num_classes,
                 num, len(model_body.layers)
             )
         )
-    elif freeze_level == 0:
+    else:
         for i in range(len(model_body.layers)):
             model_body.layers[i].trainable = True
         print('Unfreeze all of the layers.')
@@ -331,6 +379,11 @@ def get_yolo3_train_model(model_type, anchors, num_classes,
         optimizer=optimizer,
         loss={'yolo_loss': lambda y_true, y_pred: y_pred},
     )
+
+    # `freeze_level` may have been downgraded above; report it back so the
+    # caller can skip a now-meaningless frozen transfer stage.
+    model.effective_freeze_level = freeze_level
+    model_body.effective_freeze_level = freeze_level
 
     return model, model_body
 

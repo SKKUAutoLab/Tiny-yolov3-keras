@@ -34,31 +34,46 @@ class DatasetShuffleCallBack(Callback):
 
 
 class CheckpointCleanCallBack(Callback):
-    def __init__(self, checkpoint_dir, max_val_keep=5, max_eval_keep=2):
+    """Keep only the most recent N checkpoints of each family in log_dir.
+
+    Families handled:
+      - 'ep*-mAP*.h5'  : eval checkpoints        -> max_eval_keep
+      - 'ep*.h5'       : per-epoch val checkpoints -> max_val_keep
+      - 'best_*.h5'    : BestMetricCheckpoint saves -> max_best_keep
+    'best_*.h5' used to be excluded, so one file per improvement piled up
+    forever (a tiny-yolov3 full model h5 is ~35MB).
+    """
+    def __init__(self, checkpoint_dir, max_val_keep=5, max_eval_keep=2,
+                 max_best_keep=3):
+        super().__init__()
         self.checkpoint_dir = checkpoint_dir
         self.max_val_keep = max_val_keep
         self.max_eval_keep = max_eval_keep
+        self.max_best_keep = max_best_keep
+
+    @staticmethod
+    def _prune(ckpts, max_keep):
+        """Delete all but the newest `max_keep` files (by mtime)."""
+        if max_keep is None or max_keep <= 0:
+            # 0/None means "no limit"; never interpret it as "delete everything"
+            return
+        ckpts = sorted(ckpts, key=lambda f: os.path.getmtime(f))
+        for ckpt in ckpts[:-max_keep]:
+            try:
+                os.remove(ckpt)
+            except OSError as e:
+                print('[WARN] could not remove checkpoint {}: {}'.format(ckpt, e))
 
     def on_epoch_end(self, epoch, logs=None):
-        # 전체 체크포인트
-        all_ckpts = sorted(
-            glob.glob(os.path.join(self.checkpoint_dir, 'ep*.h5')),
-            reverse=False
-        )
         # mAP 포함된 eval ckpt / 그 외 val ckpt 분리
-        eval_ckpts = sorted(
-            glob.glob(os.path.join(self.checkpoint_dir, 'ep*-mAP*.h5')),
-            reverse=False
-        )
-        val_ckpts = sorted(list(set(all_ckpts) - set(eval_ckpts)), reverse=False)
+        eval_ckpts = glob.glob(os.path.join(self.checkpoint_dir, 'ep*-mAP*.h5'))
+        val_ckpts = [f for f in glob.glob(os.path.join(self.checkpoint_dir, 'ep*.h5'))
+                     if f not in set(eval_ckpts)]
+        best_ckpts = glob.glob(os.path.join(self.checkpoint_dir, 'best_*.h5'))
 
-        # 최근 max_val_keep 개만 남기고 삭제
-        for ckpt in val_ckpts[:-(self.max_val_keep)]:
-            os.remove(ckpt)
-
-        # 최근 max_eval_keep 개만 남기고 삭제
-        for ckpt in eval_ckpts[:-(self.max_eval_keep)]:
-            os.remove(ckpt)
+        self._prune(val_ckpts, self.max_val_keep)
+        self._prune(eval_ckpts, self.max_eval_keep)
+        self._prune(best_ckpts, self.max_best_keep)
 
 
 class EvalCallBack(Callback):

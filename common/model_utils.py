@@ -20,21 +20,37 @@ def add_metrics(model, metric_dict):
         #
         #model.metrics_names.append(name)
         #model.metrics_tensors.append(loss)
-        model.add_metric(metric, name=name, aggregation='mean')
+        try:
+            model.add_metric(metric, name=name, aggregation='mean')
+        except TypeError:
+            # newer keras dropped the `aggregation` kwarg (mean is the only mode)
+            model.add_metric(metric, name=name)
 
 
-def get_pruning_model(model, begin_step, end_step):
-    import tensorflow as tf
-    if tf.__version__.startswith('2'):
-        # model pruning API is not supported in TF 2.0 yet
-        raise Exception('model pruning is not fully supported in TF 2.x, Please switch env to TF 1.x for this feature')
+def get_pruning_model(model, begin_step, end_step, initial_sparsity=0.0,
+                      final_sparsity=0.7, frequency=100):
+    """Wrap a model with tfmot magnitude pruning.
+
+    Works on both TF 1.x and TF 2.x (tensorflow_model_optimization has
+    supported TF 2.x for a long time; the old hard `raise` here was stale).
+
+    IMPORTANT: the caller MUST add `sparsity.UpdatePruningStep()` to the
+    training callbacks, otherwise tfmot raises at fit() time because the
+    pruning step counter is never advanced. Call `sparsity.strip_pruning()`
+    before exporting the model.
+    """
+    if end_step is None or end_step <= begin_step:
+        raise ValueError(
+            'invalid pruning schedule: end_step ({}) must be greater than '
+            'begin_step ({}). Check steps_per_epoch * total_epoch.'.format(
+                end_step, begin_step))
 
     pruning_params = {
-      'pruning_schedule': sparsity.PolynomialDecay(initial_sparsity=0.0,
-                                                   final_sparsity=0.7,
+      'pruning_schedule': sparsity.PolynomialDecay(initial_sparsity=initial_sparsity,
+                                                   final_sparsity=final_sparsity,
                                                    begin_step=begin_step,
                                                    end_step=end_step,
-                                                   frequency=100)
+                                                   frequency=frequency)
     }
 
     pruning_model = sparsity.prune_low_magnitude(model, **pruning_params)

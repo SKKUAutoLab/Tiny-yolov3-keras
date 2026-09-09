@@ -107,15 +107,23 @@ def get_colors(number, bright=True):
     np.random.seed(None)  # Reset seed to default.
     return colors
 
-def get_dataset(annotation_file, shuffle=True):
+def get_dataset(annotation_file, shuffle=True, seed=None):
+    """Load an annotation txt file into a list of (stripped, non-empty) lines.
+
+    NOTE: shuffling uses a *local* RandomState so that the global numpy RNG
+    (which drives data augmentation) is never re-seeded as a side effect.
+    Pass `seed` to get a reproducible train/val split across runs.
+    """
     with open(annotation_file) as f:
         lines = f.readlines()
         lines = [line.strip() for line in lines]
 
+    # drop blank lines / comments so len(dataset) matches the real sample count
+    lines = [line for line in lines if line and not line.startswith('#')]
+
     if shuffle:
-        np.random.seed(int(time.time()))
-        np.random.shuffle(lines)
-        #np.random.seed(None)
+        rng = np.random.RandomState(seed if seed is not None else int(time.time()))
+        rng.shuffle(lines)
 
     return lines
 

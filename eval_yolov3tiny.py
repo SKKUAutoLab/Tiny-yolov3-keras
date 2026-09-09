@@ -1,4 +1,4 @@
-# python eval_yolov3tiny --model_path logs/yolov3_tiny/epXXX-lossXX-val_lossXX.h5 --anchors_path configs/tiny_yolo3_anchors.txt  --classes_path configs/lane_class.txt  --annotation_file data/lane_detection/train/_annotations.txt  --quantize --eval_quant
+# python eval_yolov3tiny --model_path logs/tiny_yolov3/inference_tiny_yolov3_epochXXX_final.h5 --anchors_path configs/tiny_yolo3_anchors.txt  --classes_path configs/lane_class.txt  --annotation_file data/lane_detection/train/_annotations.txt  --quantize --eval_quant
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-

@@ -248,9 +248,18 @@ class Yolo3DataGenerator(Sequence):
 
 
 
-def yolo3_data_generator(annotation_lines, batch_size, input_shape, anchors, num_classes, enhance_augment, rescale_interval, multi_anchor_assign):
-    '''data generator for fit_generator'''
+def yolo3_data_generator(annotation_lines, batch_size, input_shape, anchors, num_classes, enhance_augment, rescale_interval, multi_anchor_assign, augment=True, shuffle=True):
+    '''data generator for model.fit()
+
+    augment: apply random augmentation. MUST be False for validation data,
+             otherwise val_loss is noise and every val_loss-driven callback
+             (checkpoint / early stopping / LR schedule) picks a lucky epoch.
+    shuffle: re-shuffle the line list at every pass. Keep False for validation
+             so the same samples are evaluated every epoch.
+    '''
     n = len(annotation_lines)
+    # work on a private copy: shuffling must not reorder the caller's list
+    annotation_lines = list(annotation_lines)
     i = 0
     # prepare multiscale config
     rescale_step = 0
@@ -265,16 +274,16 @@ def yolo3_data_generator(annotation_lines, batch_size, input_shape, anchors, num
         image_data = []
         box_data = []
         for b in range(batch_size):
-            if i==0:
+            if i==0 and shuffle:
                 np.random.shuffle(annotation_lines)
-            image, box = get_ground_truth_data(annotation_lines[i], input_shape, augment=True)
+            image, box = get_ground_truth_data(annotation_lines[i], input_shape, augment=augment)
             image_data.append(image)
             box_data.append(box)
             i = (i+1) % n
         image_data = np.array(image_data)
         box_data = np.array(box_data)
 
-        if enhance_augment == 'mosaic':
+        if augment and enhance_augment == 'mosaic':
             # add random mosaic augment on batch ground truth data
             image_data, box_data = random_mosaic_augment(image_data, box_data, prob=0.2)
         #elif enhance_augment == 'mosaic_v5':
@@ -284,8 +293,8 @@ def yolo3_data_generator(annotation_lines, batch_size, input_shape, anchors, num
         y_true = preprocess_true_boxes(box_data, input_shape, anchors, num_classes, multi_anchor_assign)
         yield [image_data, *y_true], np.zeros(batch_size)
 
-def yolo3_data_generator_wrapper(annotation_lines, batch_size, input_shape, anchors, num_classes, enhance_augment=None, rescale_interval=-1, multi_anchor_assign=False, **kwargs):
+def yolo3_data_generator_wrapper(annotation_lines, batch_size, input_shape, anchors, num_classes, enhance_augment=None, rescale_interval=-1, multi_anchor_assign=False, augment=True, shuffle=True, **kwargs):
     n = len(annotation_lines)
     if n==0 or batch_size<=0: return None
-    return yolo3_data_generator(annotation_lines, batch_size, input_shape, anchors, num_classes, enhance_augment, rescale_interval, multi_anchor_assign)
+    return yolo3_data_generator(annotation_lines, batch_size, input_shape, anchors, num_classes, enhance_augment, rescale_interval, multi_anchor_assign, augment=augment, shuffle=shuffle)
 
